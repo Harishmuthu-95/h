@@ -1,0 +1,866 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>City Build - Five Cities</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;font-family:Arial,sans-serif;background:#78c94f;color:white}
+#topbar{position:relative;z-index:5;background:#173c2b;padding:9px;display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap}
+h1{font-size:19px;margin:0}
+.stats,.tools{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.stats{font-size:13px;font-weight:bold}
+button{border:1px solid #ffffff40;border-radius:9px;padding:9px 10px;background:#315c40;color:white;font-weight:bold;cursor:pointer}
+button.active{background:#ffdc53;color:#253522}
+button:hover{filter:brightness(1.12)}
+canvas{display:block;width:100vw;touch-action:none;cursor:crosshair}
+#message{position:absolute;z-index:4;top:112px;left:50%;transform:translateX(-50%);background:#173c2bea;border-radius:12px;padding:10px 14px;font-size:13px;text-align:center;max-width:94%;pointer-events:none}
+#help{position:absolute;z-index:3;right:10px;bottom:10px;background:#173c2bdc;padding:10px;border-radius:11px;font-size:12px;line-height:1.55;max-width:215px;pointer-events:none}
+#cityBanner{font-size:13px;color:#ffe48b;font-weight:bold}
+@media(max-width:700px){
+ h1{font-size:15px}
+ #topbar{gap:6px;padding:7px}
+ button{font-size:10px;padding:7px}
+ .stats{font-size:11px}
+ #message{top:155px}
+ #help{max-width:170px;font-size:10px}
+}
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <h1>🌍 CITY BUILD</h1>
+  <div class="stats">
+    <span id="cityBanner">CITY 1/5</span>
+    <span>🪙 <span id="coins">250</span></span>
+    <span>🚗 <span id="cars">0</span></span>
+    <span>🛣️ <span id="roads">2</span></span>
+  </div>
+  <div class="tools">
+    <button class="active" data-tool="road">✏️ Road</button>
+    <button data-tool="toll">🚧 Toll</button>
+    <button data-tool="fuel">⛽ Fuel</button>
+    <button data-tool="bridge">🌉 Bridge</button>
+    <button id="upgrade">⬆️ Upgrade All</button>
+  </div>
+</header>
+
+<div id="message">Build your road network. Reach 100,000 coins to travel to the next city!</div>
+<canvas id="game"></canvas>
+
+<div id="help">
+  <b>YOUR FIVE-CITY JOURNEY</b><br>
+  🌱 1. Green Valley — Spring<br>
+  🏖️ 2. Sunny Coast — Summer<br>
+  🍂 3. Golden Forest — Autumn<br>
+  ❄️ 4. Snowpeak — Winter<br>
+  🌆 5. Neon Metro — City Lights<br><br>
+  💰 Every 100,000 coins unlocks the next city.<br>
+  🚗 Cars continue between cities.<br>
+  ➡️ One-way traffic only.<br>
+  ✏️ Draw curved roads by hand.<br>
+  🚧 Toll gates earn coins.<br>
+  ⬆️ Upgrade all roads together.
+</div>
+
+<script>
+(() => {
+"use strict";
+
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const $=id=>document.getElementById(id);
+
+let W=0,H=0,DPR=1;
+let coins=250;
+let cityIndex=0;
+let tool="road";
+let drawing=false,path=[];
+let roads=[],cars=[],tolls=[],stations=[],effects=[];
+let roadId=1,carId=1,spawnTimer=0,lastTime=0;
+let transferQueue=0;
+let cityTransitioning=false;
+let seasonTime=0;
+
+const GOAL=100000;
+const MAX_CITIES=5;
+const widths=[18,26,34,42];
+const roadColors=["#30343a","#282d34","#23282e","#1c2227"];
+const upgradeCosts=[100,180,300];
+
+const cities=[
+ {
+  name:"Green Valley",
+  season:"Spring",
+  emoji:"🌱",
+  grass:"#78c94f",
+  grassDetail:"#69b94a",
+  ground:"#78c94f",
+  beach:"#f4d58a",
+  water:"#35b9df",
+  tree:"#258344",
+  accent:"#8bd45f",
+  description:"Green countryside and a sunny beach"
+ },
+ {
+  name:"Sunny Coast",
+  season:"Summer",
+  emoji:"🏖️",
+  grass:"#a7d957",
+  grassDetail:"#8ec647",
+  ground:"#a7d957",
+  beach:"#f7d58a",
+  water:"#22bde2",
+  tree:"#268c59",
+  accent:"#c5eb77",
+  description:"Warm tropical coast"
+ },
+ {
+  name:"Golden Forest",
+  season:"Autumn",
+  emoji:"🍂",
+  grass:"#b7a65b",
+  grassDetail:"#a08b48",
+  ground:"#b7a65b",
+  beach:"#d8bd81",
+  water:"#639da9",
+  tree:"#a9512e",
+  accent:"#d8c16e",
+  description:"Golden leaves and autumn roads"
+ },
+ {
+  name:"Snowpeak",
+  season:"Winter",
+  emoji:"❄️",
+  grass:"#d7e6e9",
+  grassDetail:"#b9d0d5",
+  ground:"#d7e6e9",
+  beach:"#f4f7f7",
+  water:"#72b9d7",
+  tree:"#4c7d79",
+  accent:"#edf7f7",
+  description:"Snowy mountains and icy blue water"
+ },
+ {
+  name:"Neon Metro",
+  season:"City Lights",
+  emoji:"🌆",
+  grass:"#4c785c",
+  grassDetail:"#3e654e",
+  ground:"#4c785c",
+  beach:"#a2a1a9",
+  water:"#324f83",
+  tree:"#315743",
+  accent:"#6c9973",
+  description:"A modern city with glowing lights"
+ }
+];
+
+const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+const currentCity=()=>cities[cityIndex];
+
+function say(text){$("message").textContent=text}
+function lengthOf(points){
+ let n=0;
+ for(let i=1;i<points.length;i++)n+=distance(points[i-1],points[i]);
+ return n;
+}
+function makeRoad(points,level=0,bridge=false){
+ return {
+  id:roadId++,
+  points:points.map(p=>({...p})),
+  level,
+  bridge,
+  length:lengthOf(points)
+ };
+}
+
+function resize(){
+ const oldW=W||window.innerWidth;
+ const oldH=H||window.innerHeight;
+ DPR=window.devicePixelRatio||1;
+ W=window.innerWidth;
+ H=window.innerHeight-$("topbar").offsetHeight;
+ canvas.width=Math.round(W*DPR);
+ canvas.height=Math.round(H*DPR);
+ canvas.style.width=W+"px";
+ canvas.style.height=H+"px";
+ ctx.setTransform(DPR,0,0,DPR,0,0);
+
+ if(roads.length){
+  const sx=W/oldW,sy=H/oldH;
+  roads.forEach(r=>{
+   r.points.forEach(p=>{p.x*=sx;p.y*=sy});
+   r.length=lengthOf(r.points);
+  });
+  tolls.forEach(t=>{t.x*=sx;t.y*=sy});
+  stations.forEach(s=>{s.x*=sx;s.y*=sy});
+  cars.forEach(c=>{c.x*=sx;c.y*=sy});
+ }else{
+  createCityRoads();
+ }
+}
+
+function createCityRoads(){
+ const y=H*.55;
+
+ // Short starting road and separate beach-side exit.
+ // Both start at maximum level.
+ roads=[
+  makeRoad([{x:43,y},{x:92,y},{x:150,y}],3),
+  makeRoad([
+   {x:W-145,y:H*.40},
+   {x:W-92,y:H*.40},
+   {x:W-28,y:H*.40}
+  ],3)
+ ];
+}
+
+function pointAt(r,s){
+ s=clamp(s,0,r.length);
+ let walked=0;
+
+ for(let i=1;i<r.points.length;i++){
+  const a=r.points[i-1],b=r.points[i];
+  const len=distance(a,b);
+  if(walked+len>=s||i===r.points.length-1){
+   const f=len?clamp((s-walked)/len,0,1):0;
+   return {
+    x:a.x+(b.x-a.x)*f,
+    y:a.y+(b.y-a.y)*f,
+    angle:Math.atan2(b.y-a.y,b.x-a.x)
+   };
+  }
+  walked+=len;
+ }
+ return {x:r.points[0].x,y:r.points[0].y,angle:0};
+}
+
+function nearestOnRoad(p,r){
+ let best={dist:Infinity,s:0,point:null};
+ let walked=0;
+
+ for(let i=1;i<r.points.length;i++){
+  const a=r.points[i-1],b=r.points[i];
+  const dx=b.x-a.x,dy=b.y-a.y;
+  const len2=dx*dx+dy*dy;
+  const f=len2?clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/len2,0,1):0;
+  const q={x:a.x+dx*f,y:a.y+dy*f};
+  const len=Math.sqrt(len2);
+  const d=distance(p,q);
+  if(d<best.dist)best={dist:d,s:walked+len*f,point:q};
+  walked+=len;
+ }
+ return best;
+}
+
+function snap(p,max=28){
+ let best=null;
+ for(const r of roads){
+  const n=nearestOnRoad(p,r);
+  if(n.dist<max&&(!best||n.dist<best.dist))
+   best={road:r,...n};
+ }
+ return best;
+}
+
+function splitRoad(r,s){
+ const epsilon=8;
+
+ if(s<epsilon)return {point:{...r.points[0]}};
+ if(r.length-s<epsilon)
+  return {point:{...r.points[r.points.length-1]}};
+
+ const left=[{...r.points[0]}],right=[];
+ let walked=0;
+
+ for(let i=1;i<r.points.length;i++){
+  const a=r.points[i-1],b=r.points[i];
+  const len=distance(a,b);
+
+  if(walked+len<s){
+   left.push({...b});
+  }else{
+   const f=len?clamp((s-walked)/len,0,1):0;
+   const cut={x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f};
+   left.push(cut);
+   right.push({...cut});
+   if(distance(cut,b)>.5)right.push({...b});
+   for(let j=i+1;j<r.points.length;j++)right.push({...r.points[j]});
+   break;
+  }
+  walked+=len;
+ }
+
+ roads=roads.filter(q=>q.id!==r.id);
+ let before=null,after=null;
+
+ if(left.length>=2){
+  before=makeRoad(left,r.level,r.bridge);
+  roads.push(before);
+ }
+ if(right.length>=2){
+  after=makeRoad(right,r.level,r.bridge);
+  roads.push(after);
+ }
+
+ for(const c of cars){
+  if(c.roadId!==r.id)continue;
+  const p=pointAt(r,c.s);
+  const a=before?nearestOnRoad(p,before):null;
+  const b=after?nearestOnRoad(p,after):null;
+
+  if(a&&(!b||a.dist<=b.dist)){
+   c.roadId=before.id;c.s=a.s;
+  }else if(b){
+   c.roadId=after.id;c.s=b.s;
+  }
+ }
+ return {
+  point:before?{...before.points[before.points.length-1]}:
+   after?{...after.points[0]}:{...r.points[0]}
+ };
+}
+
+function splitAtPoint(p){
+ const hit=snap(p,35);
+ if(!hit)return {...p};
+ return splitRoad(hit.road,hit.s).point;
+}
+
+function cleanPath(points){
+ const out=[];
+ for(const p of points)
+  if(!out.length||distance(out[out.length-1],p)>3)out.push({...p});
+ return out;
+}
+
+function tooMessy(points){
+ if(points.length<2)return true;
+ const len=lengthOf(points);
+ const direct=distance(points[0],points[points.length-1]);
+ return len<45||len>3000||(direct>30&&len/direct>14);
+}
+
+function finishRoad(isBridge){
+ let pts=cleanPath(path);
+ if(tooMessy(pts)){
+  say("Try a longer, smoother road. Take your time!");
+  return;
+ }
+
+ const start=snap(pts[0],35);
+ if(!start){
+  say("Start drawing on an existing road.");
+  return;
+ }
+
+ let startPoint={...start.point};
+ const endHit=snap(pts[pts.length-1],35);
+ let endPoint=endHit?{...endHit.point}:{...pts[pts.length-1]};
+
+ if(endHit)endPoint=splitAtPoint(endPoint);
+ startPoint=splitAtPoint(startPoint);
+
+ const result=[startPoint];
+ for(const p of pts)
+  if(distance(result[result.length-1],p)>4)result.push({...p});
+ if(distance(result[result.length-1],endPoint)>4)result.push(endPoint);
+
+ const final=cleanPath(result);
+ if(final.length<2||lengthOf(final)<35){
+  say("Draw a little farther to build your road.");
+  return;
+ }
+
+ roads.push(makeRoad(final,0,isBridge));
+ say(isBridge?"Bridge built! Cars follow its direction.":"Road connected! Keep expanding your network.");
+ updateStats();
+}
+
+// One-way travel: cars only follow roads beginning at the road's endpoint.
+function outgoingRoads(r){
+ const end=r.points[r.points.length-1];
+ return roads.filter(other=>
+  other.id!==r.id&&distance(end,other.points[0])<20
+ );
+}
+function chooseNextRoad(r){
+ const options=outgoingRoads(r);
+ if(!options.length)return null;
+ const forward=options.filter(q=>
+  q.points[q.points.length-1].x>r.points[0].x-5
+ );
+ const pool=forward.length?forward:options;
+ return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function spawnCar(){
+ const start=roads.find(r=>
+  r.points[0].x<55&&Math.abs(r.points[0].y-H*.55)<60
+ );
+ if(!start)return;
+
+ cars.push({
+  id:carId++,
+  roadId:start.id,
+  s:4,
+  speed:46+Math.random()*12,
+  color:["#ffdb48","#ef5b52","#53c6f2","#f7f7f7",
+   "#ff914d","#c49bff","#f48fb1"][Math.floor(Math.random()*7)],
+  x:start.points[0].x,
+  y:start.points[0].y,
+  angle:0,
+  remove:false
+ });
+}
+
+// A new city gets the same cars, now travelling from its cave.
+function moveToNextCity(){
+ if(cityTransitioning)return;
+
+ if(cityIndex>=MAX_CITIES-1){
+  say("🏆 Congratulations! You have reached Neon Metro, the fifth city!");
+  return;
+ }
+
+ cityTransitioning=true;
+ cityIndex++;
+
+ // Preserve all active traffic as it moves into the next city's roads.
+ transferQueue+=cars.length;
+ cars=[];
+ roads=[];
+ tolls=[];
+ stations=[];
+ effects=[];
+ createCityRoads();
+
+ // Every carried-over car enters the new city from its cave.
+ const carried=transferQueue;
+ transferQueue=0;
+ for(let i=0;i<carried;i++)spawnCar();
+
+ $("cityBanner").textContent=
+  currentCity().emoji+" CITY "+(cityIndex+1)+"/5 — "+currentCity().name;
+
+ say(currentCity().emoji+" Welcome to "+currentCity().name+
+  "! Season: "+currentCity().season+". Your traffic has travelled with you!");
+
+ cityTransitioning=false;
+ updateStats();
+}
+
+function checkCityProgress(){
+ if(coins>=GOAL&&cityIndex<MAX_CITIES-1){
+  // Spend nothing on the transition: coins remain available.
+  moveToNextCity();
+ }
+}
+
+function updateCars(dt){
+ spawnTimer+=dt;
+ if(spawnTimer>3.2&&cars.length<32){
+  spawnTimer=0;
+  spawnCar();
+ }
+
+ for(const c of cars){
+  let r=roads.find(q=>q.id===c.roadId);
+  if(!r){c.remove=true;continue}
+
+  let move=c.speed*(1+r.level*.18)*dt;
+
+  // Keep cars spaced out on each road.
+  for(const other of cars){
+   if(other===c||other.roadId!==c.roadId)continue;
+   const gap=other.s-c.s;
+   if(gap>0&&gap<31)
+    move=Math.min(move,Math.max(0,gap-25));
+  }
+
+  c.s+=move;
+
+  if(c.s>=r.length){
+   const end=r.points[r.points.length-1];
+
+   // Cars reaching the beach exit continue into the next city.
+   if(end.x>=W-155){
+    c.remove=true;
+    transferQueue++;
+    continue;
+   }
+
+   const next=chooseNextRoad(r);
+   if(next){
+    c.roadId=next.id;
+    c.s=0;
+   }else{
+    // No reversing. Cars wait patiently until a route is added.
+    c.s=r.length;
+   }
+  }
+
+  r=roads.find(q=>q.id===c.roadId);
+  if(!r)continue;
+
+  const p=pointAt(r,c.s);
+  c.x=p.x;c.y=p.y;c.angle=p.angle;
+
+  for(const t of tolls){
+   if(distance(p,t)<19&&!t.paid[c.id]){
+    const payout=10*t.level;
+    coins+=payout;
+    t.paid[c.id]=true;
+    effects.push({x:t.x,y:t.y-12,text:"+$"+payout,life:1});
+   }
+   if(distance(p,t)>42)delete t.paid[c.id];
+  }
+ }
+
+ cars=cars.filter(c=>!c.remove);
+
+ // Any car that has left through the exit is introduced at the next city's cave.
+ // In the final city, the cars simply leave the game world.
+ if(cityIndex<MAX_CITIES-1&&transferQueue>0){
+  const n=transferQueue;
+  transferQueue=0;
+  for(let i=0;i<n;i++)spawnCar();
+ }
+
+ checkCityProgress();
+}
+
+function drawTree(x,y,s){
+ ctx.fillStyle="#80532f";
+ ctx.fillRect(x-3*s,y,6*s,12*s);
+ ctx.fillStyle=currentCity().tree;
+ ctx.beginPath();ctx.arc(x,y-4*s,13*s,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle=currentCity().accent;
+ ctx.beginPath();ctx.arc(x-5*s,y-8*s,7*s,0,Math.PI*2);ctx.fill();
+}
+
+function drawGrass(){
+ const city=currentCity();
+ ctx.fillStyle=city.ground;
+ ctx.fillRect(0,0,W,H);
+
+ for(let i=0;i<150;i++){
+  const x=(i*173+31)%W,y=(i*97+19)%H;
+  ctx.strokeStyle=i%2?city.grassDetail:city.accent;
+  ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+3,y-2);ctx.stroke();
+ }
+
+ for(let i=0;i<10;i++){
+  const x=35+(i*149)%Math.max(60,W-180);
+  const y=35+(i*177)%Math.max(80,H-60);
+  if(Math.abs(y-H*.55)<70&&x<205)continue;
+  drawTree(x,y,.72);
+ }
+
+ // Winter snowflakes and Metro city lights.
+ if(cityIndex===3){
+  ctx.fillStyle="#ffffffaa";
+  for(let i=0;i<40;i++){
+   const x=(i*113+Math.sin(seasonTime+i)*15)%W;
+   const y=(i*67+seasonTime*10)%H;
+   ctx.beginPath();ctx.arc(x,y,1.6,0,Math.PI*2);ctx.fill();
+  }
+ }
+ if(cityIndex===4){
+  for(let i=0;i<8;i++){
+   const x=35+i*70;
+   if(x>W-170)continue;
+   const bh=30+(i*23)%60;
+   ctx.fillStyle="#273d46";
+   ctx.fillRect(x,H*.28-bh,28,bh);
+   ctx.fillStyle=i%2?"#e4e58b":"#9ae6f0";
+   for(let yy=H*.28-bh+7;yy<H*.28-5;yy+=10)
+    for(let xx=x+6;xx<x+25;xx+=10)
+     ctx.fillRect(xx,yy,4,4);
+  }
+ }
+}
+
+function drawBeach(){
+ const city=currentCity();
+ const bw=Math.min(155,W*.22);
+ ctx.fillStyle=city.beach;
+ ctx.fillRect(W-bw,0,bw,H);
+ ctx.fillStyle=city.water;
+ ctx.fillRect(W-23,0,23,H);
+
+ ctx.strokeStyle="#ffffffaa";
+ ctx.lineWidth=5;
+ ctx.beginPath();
+ ctx.moveTo(W-bw+12,0);
+ ctx.bezierCurveTo(W-bw-15,H*.28,W-bw+34,H*.72,W-bw+10,H);
+ ctx.stroke();
+
+ ctx.fillStyle=cityIndex===3?"#344c5a":"#79502b";
+ ctx.font="bold 13px Arial";
+ ctx.fillText(cityIndex===4?"CITY EXIT":"BEACH",W-bw+20,28);
+
+ ctx.fillStyle="#fff";
+ ctx.font="bold 10px Arial";
+ ctx.fillText("EXIT →",W-78,H*.40-30);
+}
+
+function drawCave(){
+ const x=6,y=H*.55;
+ ctx.fillStyle=cityIndex===3?"#8b9da0":"#65735f";
+ ctx.beginPath();ctx.ellipse(x+25,y,27,36,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#303b32";
+ ctx.beginPath();ctx.ellipse(x+25,y+4,18,28,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#e4e9df";
+ ctx.font="bold 10px Arial";
+ ctx.fillText("CAVE",x+12,y+4);
+}
+
+function strokeRoad(r,width,color,dash=[]){
+ if(r.points.length<2)return;
+ ctx.beginPath();
+ ctx.moveTo(r.points[0].x,r.points[0].y);
+ for(let i=1;i<r.points.length;i++)
+  ctx.lineTo(r.points[i].x,r.points[i].y);
+
+ ctx.lineWidth=width;
+ ctx.strokeStyle=color;
+ ctx.lineCap="butt";
+ ctx.lineJoin="round";
+ ctx.miterLimit=2;
+ ctx.setLineDash(dash);
+ ctx.stroke();
+ ctx.setLineDash([]);
+}
+
+function drawRoadSurface(r){
+ const w=widths[r.level];
+ if(r.bridge){
+  strokeRoad(r,w+14,"#7b8488");
+  strokeRoad(r,w+8,"#d5d9d7");
+  strokeRoad(r,w+3,"#525a60");
+ }else{
+  strokeRoad(r,w+4,"#56615a");
+ }
+ strokeRoad(r,w,roadColors[r.level]);
+}
+function drawCentreLine(r){strokeRoad(r,2.3,"#f8f5e9",[12,10])}
+
+function drawBridgeRails(r){
+ if(!r.bridge)return;
+ for(let s=15;s<r.length-10;s+=23){
+  const p=pointAt(r,s);
+  ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);
+  ctx.fillStyle="#f2f1e6";
+  ctx.fillRect(-2,-widths[r.level]/2-6,4,3);
+  ctx.fillRect(-2,widths[r.level]/2+3,4,3);
+  ctx.restore();
+ }
+}
+
+function roundedRect(x,y,w,h,r){
+ ctx.beginPath();
+ ctx.moveTo(x+r,y);
+ ctx.arcTo(x+w,y,x+w,y+h,r);
+ ctx.arcTo(x+w,y+h,x,y+h,r);
+ ctx.arcTo(x,y+h,x,y,r);
+ ctx.arcTo(x,y,x+w,y,r);
+ ctx.closePath();
+}
+
+function drawCar(c){
+ ctx.save();ctx.translate(c.x,c.y);ctx.rotate(c.angle);
+ ctx.fillStyle="#0003";ctx.fillRect(-10,-5,23,13);
+ ctx.fillStyle=c.color;roundedRect(-12,-6,24,12,4);ctx.fill();
+ ctx.fillStyle="#cceeff";roundedRect(-5,-4,9,8,2);ctx.fill();
+ ctx.fillStyle="#dcebf0";ctx.fillRect(5,-4,4,8);
+ ctx.fillStyle="#202020";
+ ctx.fillRect(-8,-8,5,3);ctx.fillRect(5,-8,5,3);
+ ctx.fillRect(-8,5,5,3);ctx.fillRect(5,5,5,3);
+ ctx.fillStyle="#fff2b0";
+ ctx.fillRect(10,-4,2,3);ctx.fillRect(10,2,2,3);
+ ctx.restore();
+}
+
+function drawTolls(){
+ for(const t of tolls){
+  ctx.save();ctx.translate(t.x,t.y);
+  ctx.fillStyle="#252b30";roundedRect(-10,-14,20,28,4);ctx.fill();
+  ctx.fillStyle="#ffd849";
+  ctx.fillRect(-7,-11,14,4);ctx.fillRect(-7,-3,14,4);ctx.fillRect(-7,5,14,4);
+  ctx.fillStyle="#fff";ctx.font="bold 9px Arial";ctx.textAlign="center";
+  ctx.fillText("T"+t.level,0,24);
+  ctx.restore();
+ }
+}
+
+function drawStations(){
+ for(const s of stations){
+  ctx.fillStyle="#e5f2e5";roundedRect(s.x-16,s.y-12,32,24,5);ctx.fill();
+  ctx.fillStyle="#e74b3c";roundedRect(s.x-11,s.y-8,22,16,3);ctx.fill();
+  ctx.fillStyle="#fff";ctx.font="bold 14px Arial";ctx.textAlign="center";
+  ctx.fillText("F",s.x,s.y+5);
+ }
+}
+
+function drawEffects(dt){
+ for(const e of effects){
+  e.life-=dt;e.y-=28*dt;
+  ctx.globalAlpha=Math.max(0,e.life);
+  ctx.fillStyle="#fff51c";ctx.strokeStyle="#274525";ctx.lineWidth=3;
+  ctx.font="bold 19px Arial";ctx.textAlign="center";
+  ctx.strokeText(e.text,e.x,e.y);ctx.fillText(e.text,e.x,e.y);
+  ctx.globalAlpha=1;
+ }
+ effects=effects.filter(e=>e.life>0);
+}
+
+function drawPreview(){
+ if(!drawing||path.length<2)return;
+ ctx.save();ctx.globalAlpha=.75;
+ ctx.beginPath();ctx.moveTo(path[0].x,path[0].y);
+ path.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));
+ ctx.lineWidth=widths[0];ctx.lineCap="butt";ctx.lineJoin="round";
+ ctx.strokeStyle=tool==="bridge"?"#d5d9d7":"#30343a";ctx.stroke();
+ ctx.lineWidth=2;ctx.strokeStyle="#fff";ctx.setLineDash([12,10]);ctx.stroke();
+ ctx.setLineDash([]);ctx.restore();
+}
+
+function updateStats(){
+ $("coins").textContent=Math.floor(coins).toLocaleString("en-IN");
+ $("cars").textContent=cars.length;
+ $("roads").textContent=roads.length;
+ $("cityBanner").textContent=
+  currentCity().emoji+" CITY "+(cityIndex+1)+"/5 — "+currentCity().name;
+}
+
+$("upgrade").addEventListener("click",()=>{
+ const upgradeable=roads.filter(r=>r.level<3);
+ if(!upgradeable.length){
+  say("All roads are already at maximum level!");
+  return;
+ }
+
+ const totalCost=upgradeable.reduce(
+  (sum,r)=>sum+upgradeCosts[r.level],0
+ );
+
+ if(coins<totalCost){
+  say("You need "+totalCost.toLocaleString("en-IN")+
+   " coins to upgrade all available roads.");
+  return;
+ }
+
+ coins-=totalCost;
+ upgradeable.forEach(r=>r.level++);
+ say("All available roads upgraded! Cost: "+
+  totalCost.toLocaleString("en-IN")+" coins.");
+ updateStats();
+});
+
+function setTool(t){
+ tool=t;
+ document.querySelectorAll("[data-tool]").forEach(b=>
+  b.classList.toggle("active",b.dataset.tool===t));
+
+ const msgs={
+  road:"Draw from an existing road. Take your time.",
+  bridge:"Draw a bridge starting on an existing road.",
+  toll:"Tap near a road to place a toll gate. Cost: 60 coins.",
+  fuel:"Tap beside a road to build a fuel station. Cost: 80 coins."
+ };
+ say(msgs[t]);
+}
+
+document.querySelectorAll("[data-tool]").forEach(b=>
+ b.addEventListener("click",()=>setTool(b.dataset.tool)));
+
+function canvasPos(e){
+ const rect=canvas.getBoundingClientRect();
+ return {x:e.clientX-rect.left,y:e.clientY-rect.top};
+}
+
+canvas.addEventListener("pointerdown",e=>{
+ e.preventDefault();
+ const p=canvasPos(e);
+
+ if(tool==="road"||tool==="bridge"){
+  drawing=true;path=[p];canvas.setPointerCapture(e.pointerId);return;
+ }
+
+ const hit=snap(p,38);
+ if(!hit){say("Choose a spot close to a road.");return}
+
+ if(tool==="toll"){
+  if(coins<60){say("You need 60 coins for a toll gate.");return}
+  coins-=60;
+  tolls.push({x:hit.point.x,y:hit.point.y,level:1,paid:{}});
+  say("Toll gate placed. Earn coins when cars pass.");
+ }
+
+ if(tool==="fuel"){
+  if(coins<80){say("You need 80 coins for a fuel station.");return}
+  coins-=80;
+  const p2=pointAt(hit.road,hit.s);
+  stations.push({
+   x:hit.point.x+Math.cos(p2.angle+Math.PI/2)*42,
+   y:hit.point.y+Math.sin(p2.angle+Math.PI/2)*42
+  });
+  say("Fuel station built.");
+ }
+ updateStats();
+});
+
+canvas.addEventListener("pointermove",e=>{
+ if(!drawing)return;
+ const p=canvasPos(e);
+ if(distance(path[path.length-1],p)>3)path.push(p);
+});
+
+canvas.addEventListener("pointerup",()=>{
+ if(!drawing)return;
+ drawing=false;
+ finishRoad(tool==="bridge");
+ path=[];
+});
+canvas.addEventListener("pointercancel",()=>{drawing=false;path=[]});
+
+function frame(time){
+ const dt=Math.min(.04,(time-lastTime)/1000||.016);
+ lastTime=time;
+ seasonTime+=dt;
+
+ updateCars(dt);
+ drawGrass();
+ drawBeach();
+
+ roads.filter(r=>!r.bridge).forEach(drawRoadSurface);
+ roads.filter(r=>r.bridge).forEach(drawRoadSurface);
+ roads.filter(r=>!r.bridge).forEach(drawCentreLine);
+ roads.filter(r=>r.bridge).forEach(drawCentreLine);
+ roads.filter(r=>r.bridge).forEach(drawBridgeRails);
+
+ drawCave();
+ drawStations();
+ drawTolls();
+ cars.forEach(drawCar);
+ drawPreview();
+ drawEffects(dt);
+ updateStats();
+
+ requestAnimationFrame(frame);
+}
+
+resize();
+window.addEventListener("resize",resize);
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
